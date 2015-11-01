@@ -1,8 +1,19 @@
 #ifndef FREEARC_COMPRESSION_H
 #define FREEARC_COMPRESSION_H
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <limits.h>
+#include <math.h>
+#include <time.h>
 
-// Type used to represent memory amounts
-typedef unsigned MemSize;
+#include "Common.h"
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 //йНДШ НЬХАНЙ
 #define FREEARC_OK                               0     /* ALL RIGHT */
@@ -12,6 +23,9 @@ typedef unsigned MemSize;
 #define FREEARC_ERRCODE_OUTBLOCK_TOO_SMALL       (-4)  /* Output block size in (de)compressMem is not enough for all output data */
 #define FREEARC_ERRCODE_NOT_ENOUGH_MEMORY        (-5)  /* Can't allocate memory needed for (de)compression */
 #define FREEARC_ERRCODE_IO                       (-6)  /* Error when reading or writing data */
+#define FREEARC_ERRCODE_BAD_COMPRESSED_DATA      (-7)  /* Data can't be decompressed */
+#define FREEARC_ERRCODE_NOT_IMPLEMENTED          (-8)  /* Requested feature isn't supported */
+#define FREEARC_ERRCODE_NO_MORE_DATA_REQUIRED    (-9)  /* Required part of data was already decompressed */
 
 
 // йНМЯРЮМРШ ДКЪ СДНАМНИ ГЮОХЯХ НАЗ╦ЛНБ ОЮЛЪРХ
@@ -23,114 +37,177 @@ typedef unsigned MemSize;
 // йНКХВЕЯРБН АЮИР, ЙНРНПШЕ ДНКФМШ ВХРЮРЭЯЪ/ГЮОХЯШБЮРЭЯЪ ГЮ НДХМ ПЮГ БН БЯЕУ СОЮЙНБЫХЙЮУ
 #define BUFFER_SIZE (64*kb)
 
-// йНКХВЕЯРБН АЮИР, ЙНРНПШЕ ДНКФМШ ВХРЮРЭЯЪ/ГЮОХЯШБЮРЭЯЪ ГЮ НДХМ ПЮГ Б АШЯРПШУ ЛЕРНДЮУ (storing, ПЮЯОЮЙНБЙЮ ЮЯХЛЛЕРПХВМШУ ЮКЦНПХРЛНБ Х РНЛС ОНДНАМНЕ)
+// йНКХВЕЯРБН АЮИР, ЙНРНПШЕ ДНКФМШ ВХРЮРЭЯЪ/ГЮОХЯШБЮРЭЯЪ ГЮ НДХМ ПЮГ Б АШЯРПШУ ЛЕРНДЮУ Х ОПХ ПЮЯОЮЙНБЙЕ ЮЯХЛЛЕРПХВМШУ ЮКЦНПХРЛНБ
 #define LARGE_BUFFER_SIZE (256*kb)
 
+// йНКХВЕЯРБН АЮИР, ЙНРНПШЕ ДНКФМШ ВХРЮРЭЯЪ/ГЮОХЯШБЮРЭЯЪ ГЮ НДХМ ПЮГ Б НВЕМЭ АШЯРПШУ ЛЕРНДЮУ (storing, tornado Х РНЛС ОНДНАМНЕ)
+// щРНР НАЗ╦Л ЛХМХЛХГХПСЕР ОНРЕПХ МЮ disk seek operations - ОПХ СЯКНБХХ, ВРН НДМНБПЕЛЕММН МЕ ОПНХЯУНДХР Б/Б Б ДПСЦНЛ ОНРНЙЕ ;)
+#define HUGE_BUFFER_SIZE (8*mb)
+
 // дНОНКМХРЕКЭМШЕ НОПЕДЕКЕМХЪ ДКЪ СДНАЯРБЮ ЯНГДЮМХЪ ОЮПЯЕПНБ ЯРПНЙ ЛЕРНДНБ ЯФЮРХЪ
-#define COMPRESSION_METHOD_PARAMETERS_DELIMITER     ':'   /* пЮГДЕКХРЕКЭ ОЮПЮЛЕРПНБ Б ЯРПНЙНБНЛ НОХЯЮМХХ ЛЕРНДЮ ЯФЮРХЪ */
-#define MAX_COMPRESSION_METHODS  200         /* дНКФМН АШРЭ МЕ ЛЕМЭЬЕ ВХЯКЮ ЛЕРНДНБ ЯФЮРХЪ, ПЕЦХЯРПХПСЕЛШУ Я ОНЛНЫЭЧ AddCompressionMethod */
-#define MAX_PARAMETERS           20          /* дНКФМН АШРЭ МЕ ЛЕМЭЬЕ ЛЮЙЯХЛЮКЭМНЦН ЙНК-БЮ ОЮПЮЛЕРПНБ (ПЮГДЕК╦ММШУ ДБНЕРНВХЪЛХ), ЙНРНПНЕ ЛНФЕР ХЛЕРЭ ЛЕРНД ЯФЮРХЪ */
-#define MAX_METHOD_STRLEN        256         /* лЮЙЯХЛЮКЭМЮЪ ДКХМЮ ЯРПНЙХ, НОХЯШБЮЧЫЕИ ЛЕРНД ЯФЮРХЪ */
-
-/******************************************************************************
-** яРЮМДЮПРМШЕ НОПЕДЕКЕМХЪ ****************************************************
-******************************************************************************/
-#define make4byte(a,b,c,d)       ((a)+256*((b)+256*((c)+256*(((uint32)d)))))
-#define FreeAndNil(p)            ((p) && (free(p), (p)=NULL))
-#define iterate(num, statement)  {for( int i=0; i<num; i++) {statement;}}
-#define iterate_var(i, num)      for( int i=0; i<num; i++)
-#define iterate_array(i, array)  for( int i=0; i<array.size; i++)
-#define TRUE                     1
-#define FALSE                    0
-
-#define in_set( c, set )         (strchr (set, c ) != NULL)
-#define in_set0( c, set )        (memchr (set, c, sizeof(set) ) != 0)
-#define str_end(str)             (strchr (str,'\0'))
-#define last_char(str)           (str_end(str) [-1])
-#define strequ(a,b)              (strcmp((a),(b))==EQUAL)
-#define namecmp                  stricmp
-#define nameequ(s1,s2)           (namecmp(s1,s2)==EQUAL)
-#define end_with(str,with)       (nameequ (str_end(str)-strlen(with), with))
-#define strdup_msg(s)            (strcpy (new char[strlen(s)+1], (s)))
-#define find_extension(str)      (find_extension_in_entry (parse_path(str)))
-#define mymax(a,b)               ((a)>(b)? (a) : (b))
-#define mymin(a,b)               ((a)<(b)? (a) : (b))
-#define char2int(c)              ((c)-'0')
-#define elements(arr)            (sizeof(arr)/sizeof(*arr))
-#define endof(arr)               ((arr)+elements(arr))
-#define EQUAL                    0   /* result of strcmp/memcmp for equal strings */
-
-// Read unsigned 16/24/32-bit value at given address
-#define value16(p)               (*(uint*)(p) & 0xffff)
-#define value24(p)               (*(uint*)(p) & 0xffffff)
-#define value32(p)               (*(ulong*)(p))
-
-#ifndef CHECK
-#define CHECK(a,b)               {if (!(a))  printf b, exit(1);}
-#endif
-
-// Include statements marked as debug(..)  only if we enabled debugging
-#ifdef DEBUG
-#define debug
-#else
-#define debug(stmt) 0
-#endif
-
-// Include statements marked as stat(..)  only if we enabled gathering stats
-#ifdef STAT
-#define stat
-#else
-#define stat(stmt) 0
-#endif
+#define COMPRESSION_METHODS_DELIMITER            '+'   /* пЮГДЕКХРЕКЭ ЮКЦНПХРЛНБ ЯФЮРХЪ Б ЯРПНЙНБНЛ НОХЯЮМХХ ЙНЛОПЕЯЯНПЮ */
+#define COMPRESSION_METHOD_PARAMETERS_DELIMITER  ':'   /* пЮГДЕКХРЕКЭ ОЮПЮЛЕРПНБ Б ЯРПНЙНБНЛ НОХЯЮМХХ ЛЕРНДЮ ЯФЮРХЪ */
+#define MAX_COMPRESSION_METHODS    200         /* дНКФМН АШРЭ МЕ ЛЕМЭЬЕ ВХЯКЮ ЛЕРНДНБ ЯФЮРХЪ, ПЕЦХЯРПХПСЕЛШУ Я ОНЛНЫЭЧ AddCompressionMethod */
+#define MAX_PARAMETERS             200         /* дНКФМН АШРЭ МЕ ЛЕМЭЬЕ ЛЮЙЯХЛЮКЭМНЦН ЙНК-БЮ ОЮПЮЛЕРПНБ (ПЮГДЕК╦ММШУ ДБНЕРНВХЪЛХ), ЙНРНПНЕ ЛНФЕР ХЛЕРЭ ЛЕРНД ЯФЮРХЪ */
+#define MAX_METHOD_STRLEN          2048        /* лЮЙЯХЛЮКЭМЮЪ ДКХМЮ ЯРПНЙХ, НОХЯШБЮЧЫЕИ ЛЕРНД ЯФЮРХЪ */
+#define MAX_METHODS_IN_COMPRESSOR  100         /* лЮЙЯХЛЮКЭМНЕ ВХЯКН ЛЕРНДНБ Б НДМНЛ ЙНЛОПЕЯЯНПЕ */
+#define MAX_EXTERNAL_COMPRESSOR_SECTION_LENGTH 2048  /* лЮЙЯХЛЮКЭМЮЪ ДКХМЮ ЯЕЙЖХХ [External compressor] */
 
 
-/******************************************************************************
-** яХМНМХЛШ ДКЪ ОПНЯРШУ РХОНБ, ХЯОНКЭГСЕЛШУ Б ОПНЦПЮЛЛЕ ***********************
-******************************************************************************/
-typedef unsigned int       uint,   UINT;
-typedef unsigned long      uint32, ulong;
-typedef unsigned short int uint16, ushort;
-typedef unsigned char      uint8,  uchar, byte, BYTE;
-typedef   signed long      sint32;
-typedef   signed short int sint16;
-typedef   signed char      sint8;
-
-#ifdef __GNUC__
-typedef          long long sint64;
-typedef unsigned long long uint64;
-#elif _MSC_EXTENSIONS || _VISUALC || __INTEL_COMPILER || __BORLANDC__
-typedef          __int64 sint64;
-typedef unsigned __int64 uint64;
-#else
-typedef          long long sint64;
-typedef unsigned long long uint64;
-#endif
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+// ****************************************************************************************************************************
+// уекоепш времхъ/гюохях дюммшу б лерндюу яфюрхъ ******************************************************************************
+// ****************************************************************************************************************************
 
 // рХО ТСМЙЖХХ ДКЪ ВРЕМХЪ БУНДМШУ Х ГЮОХЯХ БШУНДМШУ ДЮММШУ СОЮЙНБЫХЙНБ/ПЮЯОЮЙНБЫХЙНБ
 typedef int INOUT_FUNC (void *buf, int size);
 
+// рХО ТСМЙЖХХ ДКЪ НАПЮРМШУ БШГНБНБ. callback МЮ ЯЮЛНЛ ДЕКЕ ХЛЕЕР РХО CALLBACK_FUNC* ;)
+typedef void VOID_FUNC (void);
+typedef int CALLBACK_FUNC (char *what, void *data, int size, VOID_FUNC *callback);
+
+// лЮЙПНЯШ ДКЪ ВРЕМХЪ/ГЮОХЯХ Б(Ш)УНДМШУ ОНРНЙНБ Я ОПНБЕПЙНИ, ВРН ОЕПЕДЮМН ПНБМН ЯРНКЭЙН ДЮММШУ, ЯЙНКЭЙН АШКН ГЮОПНЬЕМН
+#define checked_read(ptr,size)         if ((x = callback("read" ,ptr,size,auxdata)) != size) { x>=0 && (x=FREEARC_ERRCODE_IO); goto finished; }
+#define checked_write(ptr,size)        if ((x = callback("write",ptr,size,auxdata)) != size) { x>=0 && (x=FREEARC_ERRCODE_IO); goto finished; }
+// лЮЙПНЯ ДКЪ ВРЕМХЪ БУНДМШУ ОНРНЙНБ Я ОПНБЕПЙНИ МЮ НЬХАЙХ Х ЙНМЕЖ БУНДМШУ ДЮММШУ
+#define checked_eof_read(ptr,size)     if ((x = callback("write",ptr,size,auxdata)) != size) { x>0  && (x=FREEARC_ERRCODE_IO); goto finished; }
+
+// Auxiliary code to read/write data blocks and 4-byte headers
+#define MALLOC(type, ptr, size)                                            \
+{                                                                          \
+    (ptr) = (type*) malloc ((size) * sizeof(type));                        \
+    if ((ptr) == NULL) {                                                   \
+        errcode = FREEARC_ERRCODE_NOT_ENOUGH_MEMORY;                       \
+        goto finished;                                                     \
+    }                                                                      \
+}
+
+#define READ(buf, size)                                                    \
+{                                                                          \
+    void *localBuf = (buf);                                                \
+    int localSize  = (size);                                               \
+    if (localSize && (errcode=callback("read",localBuf,localSize,auxdata))!=size) { \
+        if (errcode>0) (errcode=FREEARC_ERRCODE_IO);                       \
+        goto finished;                                                     \
+    }                                                                      \
+}
+
+#define READ_LEN(len, buf, size)                                           \
+{                                                                          \
+    if ((errcode=len=callback("read",buf,size,auxdata))<=0) {              \
+        goto finished;                                                     \
+    }                                                                      \
+}
+
+#define WRITE(buf, size)                                                   \
+{                                                                          \
+    void *localBuf = (buf);                                                \
+    int localSize  = (size);                                               \
+    if (localSize && (errcode=callback("write",localBuf,localSize,auxdata))<0)  \
+        goto finished;                                                     \
+}
+
+#define READ4(var)                                                         \
+{                                                                          \
+    unsigned char header[4];                                               \
+    errcode = callback ("read", header, 4, auxdata);                       \
+    if (errcode != 4) {                                                    \
+        if (errcode>0) (errcode=FREEARC_ERRCODE_IO);                       \
+        goto finished;                                                     \
+    }                                                                      \
+    (var) = (((((header[3]<<8)+header[2])<<8)+header[1])<<8)+header[0];    \
+}
+
+#define WRITE4(value)                                                      \
+{                                                                          \
+    unsigned char header[4];                                               \
+    header[3] = ((unsigned)value)>>24;                                     \
+    header[2] = ((unsigned)value)>>16;                                     \
+    header[1] = ((unsigned)value)>>8;                                      \
+    header[0] = ((unsigned)value);                                         \
+    WRITE (header, 4);                                                     \
+}
+
+#define QUASIWRITE(size)                                                   \
+{                                                                          \
+    int64 localSize = (size);                                              \
+    callback ("quasiwrite", &localSize, 0, auxdata);                       \
+}
+
+
+// Buffered data output
+#define FOPEN()   Buffer fbuffer(BUFFER_SIZE)
+#define FWRITE(buf, size)                                                  \
+{                                                                          \
+    void *flocalBuf = (buf);                                               \
+    int flocalSize = (size);                                               \
+    int rem = fbuffer.remainingSpace();                                    \
+    if (flocalSize>=4096) {                                                \
+        FFLUSH();                                                          \
+        WRITE(flocalBuf, flocalSize);                                      \
+    } else if (flocalSize < rem) {                                         \
+        fbuffer.put (flocalBuf, flocalSize);                               \
+    } else {                                                               \
+        fbuffer.put (flocalBuf, rem);                                      \
+        FFLUSH();                                                          \
+        fbuffer.put ((byte*)flocalBuf+rem, flocalSize-rem);                \
+    }                                                                      \
+}
+#define FFLUSH()  { WRITE (fbuffer.buf, fbuffer.len());  fbuffer.empty(); }
+#define FCLOSE()  { FFLUSH();  fbuffer.free(); }
+
+
+// ****************************************************************************************************************************
+// срхкхрш ********************************************************************************************************************
+// ****************************************************************************************************************************
+
+// юКЦНПХРЛ ЯФЮРХЪ/ЬХТПНБЮМХЪ, ОПЕДЯРЮБКЕММШИ Б БХДЕ ЯРПНЙХ
+typedef char *CMETHOD;
+
+// оНЯКЕДНБЮРЕКЭМНЯРЭ ЮКЦНПХРЛНБ ЯФЮРХЪ/ЬХТПНБЮМХЪ, ОПЕДЯРЮБКЕММЮЪ Б БХДЕ "exe+rep+lzma+aes"
+typedef char *COMPRESSOR;
+
+// гЮОПНЯХРЭ ЯЕПБХЯ what ЛЕРНДЮ ЯФЮРХЪ method
+int CompressionService (char *method, char *what, DEFAULT(int param,0), DEFAULT(void *data,NULL), DEFAULT(CALLBACK_FUNC *callback,NULL));
+
+// оПНБЕПХРЭ, ВРН ДЮММШИ ЙНЛОПЕЯЯНП БЙКЧВЮЕР ЮКЦНПХРЛ ЬХТПНБЮМХЪ
+int compressorIsEncrypted (COMPRESSOR c);
+// бШВХЯКХРЭ, ЯЙНКЭЙН ОЮЛЪРХ МСФМН ДКЪ ПЮЯОЮЙНБЙХ ДЮММШУ, ЯФЮРШУ ЩРХЛ ЙНЛОПЕЯЯНПНЛ
+MemSize compressorGetDecompressionMem (COMPRESSOR c);
+
+// Get/set number of threads used for (de)compression
+int  GetCompressionThreads (void);
+void SetCompressionThreads (int threads);
+
+// Register/unregister temporary files that should be deleted on ^Break
+void registerTemporaryFile   (char *name, DEFAULT(FILE* file, NULL));
+void unregisterTemporaryFile (char *name);
+
+// This function should cleanup Compression Library
+void compressionLib_cleanup (void);
+
+
+// ****************************************************************************************************************************
+// яепбхяш яфюрхъ х пюяоюйнбйх дюммшу *****************************************************************************************
+// ****************************************************************************************************************************
+
 // пЮЯОЮЙНБЮРЭ ДЮММШЕ, СОЮЙНБЮММШЕ ГЮДЮММШЛ ЛЕРНДНЛ
-int decompress (char *method, INOUT_FUNC *read_f, INOUT_FUNC *write_f, double *t);
+int decompress (char *method, CALLBACK_FUNC *callback, VOID_FUNC *auxdata);
 // оПНВХРЮРЭ ХГ БУНДМНЦН ОНРНЙЮ НАНГМЮВЕМХЕ ЛЕРНДЮ ЯФЮРХЪ Х ПЮЯОЮЙНБЮРЭ ДЮММШЕ ЩРХЛ ЛЕРНДНЛ
-int DecompressWithHeader (INOUT_FUNC *read_f, INOUT_FUNC *write_f, double *t);
+int DecompressWithHeader (CALLBACK_FUNC *callback, VOID_FUNC *auxdata);
 // пЮЯОЮЙНБЮРЭ ДЮММШЕ Б ОЮЛЪРХ, ГЮОХЯЮБ Б БШУНДМНИ АСТЕП МЕ АНКЕЕ outputSize АЮИР.
 // бНГБПЮЫЮЕР ЙНД НЬХАЙХ ХКХ ЙНКХВЕЯРБН АЮИР, ГЮОХЯЮММШУ Б БШУНДМНИ АСТЕП
-int DecompressMem (char *method, void *input, int inputSize, void *output, int outputSize, double *t);
-int DecompressMemWithHeader     (void *input, int inputSize, void *output, int outputSize, double *t);
+int DecompressMem (char *method, void *input, int inputSize, void *output, int outputSize);
+int DecompressMemWithHeader     (void *input, int inputSize, void *output, int outputSize);
 
 #ifndef FREEARC_DECOMPRESS_ONLY
 // сОЮЙНБЮРЭ ДЮММШЕ ГЮДЮММШЛ ЛЕРНДНЛ
-int compress   (char *method, INOUT_FUNC *read_f, INOUT_FUNC *write_f, double *t);
+int compress   (char *method, CALLBACK_FUNC *callback, VOID_FUNC *auxdata);
 // гЮОХЯЮРЭ Б БШУНДМНИ ОНРНЙ НАНГМЮВЕМХЕ ЛЕРНДЮ ЯФЮРХЪ Х СОЮЙНБЮРЭ ДЮММШЕ ЩРХЛ ЛЕРНДНЛ
-int CompressWithHeader (char *method, INOUT_FUNC *read_f, INOUT_FUNC *write_f, double *t);
+int CompressWithHeader (char *method, CALLBACK_FUNC *callback, VOID_FUNC *auxdata);
 // сОЮЙНБЮРЭ ДЮММШЕ Б ОЮЛЪРХ, ГЮОХЯЮБ Б БШУНДМНИ АСТЕП МЕ АНКЕЕ outputSize АЮИР.
 // бНГБПЮЫЮЕР ЙНД НЬХАЙХ ХКХ ЙНКХВЕЯРБН АЮИР, ГЮОХЯЮММШУ Б БШУНДМНИ АСТЕП
-int CompressMem           (char *method, void *input, int inputSize, void *output, int outputSize, double *t);
-int CompressMemWithHeader (char *method, void *input, int inputSize, void *output, int outputSize, double *t);
+int CompressMem           (char *method, void *input, int inputSize, void *output, int outputSize);
+int CompressMemWithHeader (char *method, void *input, int inputSize, void *output, int outputSize);
 // бШБЕЯРХ Б out_method ЙЮМНМХВЕЯЙНЕ ОПЕДЯРЮБКЕМХЕ ЛЕРНДЮ ЯФЮРХЪ in_method (БШОНКМХРЭ ParseCompressionMethod + ShowCompressionMethod)
 int CanonizeCompressionMethod (char *in_method, char *out_method);
 // хМТНПЛЮЖХЪ Н ОЮЛЪРХ, МЕНАУНДХЛНИ ДКЪ СОЮЙНБЙХ/ПЮЯОЮЙНБЙХ, ПЮГЛЕПЕ ЯКНБЮПЪ Х ПЮГЛЕПЕ АКНЙЮ.
@@ -153,9 +230,12 @@ int LimitBlockSize        (char *in_method, MemSize bs,   char *out_method);
 #endif
 
 // тСМЙЖХЪ "(ПЮЯ)ОЮЙНБЙХ", ЙНОХПСЧЫЮЪ ДЮММШЕ НДХМ Б НДХМ
-int copy_data   (INOUT_FUNC *read_f, INOUT_FUNC *write_f);
+int copy_data   (CALLBACK_FUNC *callback, VOID_FUNC *auxdata);
 
 
+// ****************************************************************************************************************************
+// йкюяя, пеюкхгсчыхи хмрептеия й лерндс яфюрхъ *******************************************************************************
+// ****************************************************************************************************************************
 
 #ifdef __cplusplus
 
@@ -164,9 +244,9 @@ class COMPRESSION_METHOD
 {
 public:
   // тСМЙЖХХ ПЮЯОЮЙНБЙХ Х СОЮЙНБЙХ
-  virtual int decompress (INOUT_FUNC *read_f, INOUT_FUNC *write_f) = 0;
+  virtual int decompress (CALLBACK_FUNC *callback, VOID_FUNC *auxdata) = 0;
 #ifndef FREEARC_DECOMPRESS_ONLY
-  virtual int compress   (INOUT_FUNC *read_f, INOUT_FUNC *write_f) = 0;
+  virtual int compress   (CALLBACK_FUNC *callback, VOID_FUNC *auxdata) = 0;
 
   // гЮОХЯЮРЭ Б buf[MAX_METHOD_STRLEN] ЯРПНЙС, НОХЯШБЮЧЫСЧ ЛЕРНД ЯФЮРХЪ Х ЕЦН ОЮПЮЛЕРПШ (ТСМЙЖХЪ, НАПЮРМЮЪ Й ParseCompressionMethod)
   virtual void ShowCompressionMethod (char *buf) = 0;
@@ -189,32 +269,47 @@ public:
   void LimitDictionary       (MemSize dict) {if (GetDictionary()       > dict)  SetDictionary(dict);}
   void LimitBlockSize        (MemSize bs)   {if (GetBlockSize()        > bs)    SetBlockSize(bs);}
 #endif
+  // сМХБЕПЯЮКЭМШИ ЛЕРНД. оЮПЮЛЕРПШ:
+  //   what: "compress", "decompress", "setCompressionMem", "limitDictionary"...
+  //   data: ДЮММШЕ ДКЪ НОЕПЮЖХХ Б ТНПЛЮРЕ, ГЮБХЯЪЫЕЛ НР ЙНМЙПЕРМНИ БШОНКМЪЕЛНИ НОЕПЮЖХХ
+  //   param&result: ОПНЯРНИ ВХЯКНБНИ ОЮПЮЛЕРП, ВРН ДНЯРЮРНВМН ДКЪ ЛМНЦХУ ХМТНПЛЮЖХНММШУ НОЕПЮЖХИ
+  // мЕХЯОНКЭГСЕЛШЕ ОЮПЮЛЕРПШ СЯРЮМЮБКХБЮЧРЯЪ Б NULL/0. result<0 - ЙНД НЬХАЙХ
+  virtual int doit (char *what, int param, void *data, CALLBACK_FUNC *callback);
+
+  double addtime;  // дНОНКМХРЕКЭМНЕ БПЕЛЪ, ОНРПЮВЕММНЕ МЮ ЯФЮРХЕ (БН БМЕЬМХУ ОПНЦПЮЛЛЮУ, ДНОНКМХРЕКЭМШУ threads Х Р.Д.)
+  COMPRESSION_METHOD() {addtime=0;}
+  virtual ~COMPRESSION_METHOD() {}
 //  Debugging code:  char buf[100]; ShowCompressionMethod(buf); printf("%s : %u => %u\n", buf, GetCompressionMem(), mem);
 };
+
+
+// ****************************************************************************************************************************
+// тюапхйю COMPRESSION_METHOD *************************************************************************************************
+// ****************************************************************************************************************************
 
 // яЙНМЯРПСХПНБЮРЭ НАЗЕЙР ЙКЮЯЯЮ - МЮЯКЕДМХЙЮ COMPRESSION_METHOD,
 // ПЕЮКХГСЧЫХИ ЛЕРНД ЯФЮРХЪ, ГЮДЮММШИ Б БХДЕ ЯРПНЙХ `method`
 COMPRESSION_METHOD *ParseCompressionMethod (char* method);
 
-
 typedef COMPRESSION_METHOD* (*CM_PARSER) (char** parameters);
-int AddCompressionMethod (CM_PARSER parser);  // дНАЮБХРЭ ОЮПЯЕП МНБНЦН ЛЕРНДЮ Б ЯОХЯНЙ ОНДДЕПФХБЮЕЛШУ ЛЕРНДНБ ЯФЮРХЪ
-MemSize parseInt (char *param, int *error);   // еЯКХ ЯРПНЙЮ param ЯНДЕПФХР ЖЕКНЕ ВХЯКН - БНГБПЮРХРЭ ЕЦН, ХМЮВЕ СЯРЮМНБХРЭ error=1
-MemSize parseMem (char *param, int *error);   // юМЮКНЦХВМН, РНКЭЙН ЯРПНЙЮ param ЛНФЕР ЯНДЕПФЮРЭ ЯСТТХЙЯШ b/k/m/g/^, ВРН НГМЮВЮЕР ЯННРБЕРЯРБСЧЫХЕ ЕДХМХЖШ ОЮЛЪРХ (ОН СЛНКВЮМХЧ - '^', Р.Е. ЯРЕОЕМЭ ДБНИЙХ)
-#ifndef FREEARC_DECOMPRESS_ONLY
-void showMem (MemSize mem, char *result);     // бНГБПЮЫЮЕР РЕЙЯРНБНЕ НОХЯЮМХЕ НАЗ╦ЛЮ ОЮЛЪРХ
-#endif
-void strncopy( char *to, char *from, int len );
-void split (char *str, char splitter, char **result);
+typedef COMPRESSION_METHOD* (*CM_PARSER2) (char** parameters, void *data);
+int AddCompressionMethod         (CM_PARSER parser);  // дНАЮБХРЭ ОЮПЯЕП МНБНЦН ЛЕРНДЮ Б ЯОХЯНЙ ОНДДЕПФХБЮЕЛШУ ЛЕРНДНБ ЯФЮРХЪ
+int AddExternalCompressionMethod (CM_PARSER2 parser2, void *data);  // дНАЮБХРЭ ОЮПЯЕП БМЕЬМЕЦН ЛЕРНДЮ ЯФЮРХЪ Я ДНОНКМХРЕКЭМШЛ ОЮПЮЛЕРПНЛ, ЙНРНПШИ ДНКФЕМ АШРЭ ОЕПЕДЮМ ЩРНЛС ОЮПЯЕПС
+void ClearExternalCompressorsTable (void);                          // нВХЯРХРЭ РЮАКХЖС БМЕЬМХУ СОЮЙНБЫХЙНБ
+
+
+// ****************************************************************************************************************************
+// лернд "яфюрхъ" STORING *****************************************************************************************************
+// ****************************************************************************************************************************
 
 // пЕЮКХГЮЖХЪ ЛЕРНДЮ "ЯФЮРХЪ" STORING
 class STORING_METHOD : public COMPRESSION_METHOD
 {
 public:
   // тСМЙЖХХ ПЮЯОЮЙНБЙХ Х СОЮЙНБЙХ
-  virtual int decompress (INOUT_FUNC *read_f, INOUT_FUNC *write_f);
+  virtual int decompress (CALLBACK_FUNC *callback, VOID_FUNC *auxdata);
 #ifndef FREEARC_DECOMPRESS_ONLY
-  virtual int compress   (INOUT_FUNC *read_f, INOUT_FUNC *write_f);
+  virtual int compress   (CALLBACK_FUNC *callback, VOID_FUNC *auxdata);
 
   // гЮОХЯЮРЭ Б buf[MAX_METHOD_STRLEN] ЯРПНЙС, НОХЯШБЮЧЫСЧ ЛЕРНД ЯФЮРХЪ (ТСМЙЖХЪ, НАПЮРМЮЪ Й parse_STORING)
   virtual void ShowCompressionMethod (char *buf);
@@ -234,30 +329,22 @@ public:
 // пЮГАНПЫХЙ ЯРПНЙХ ЛЕРНДЮ ЯФЮРХЪ STORING
 COMPRESSION_METHOD* parse_STORING (char** parameters);
 
-}       // extern "C"
 #endif  // __cplusplus
 
 
-/******************************************************************************
-** A few commonly used functions **********************************************
-******************************************************************************/
+// ****************************************************************************************************************************
+// ENCRYPTION ROUTINES *****************************************************************************************************
+// ****************************************************************************************************************************
 
-// Whole part of number's binary logarithm (please ensure that n>0)
-static MemSize lb (MemSize n)
-{
-  MemSize i;
-  for (i=0; n>1; i++, n/=2);
-  return i;
-}
+// Generates key based on password and salt using given number of hashing iterations
+void Pbkdf2Hmac (const BYTE *pwd, int pwdSize, const BYTE *salt, int saltSize,
+                 int numIterations, BYTE *key, int keySize);
 
-// щРЮ ОПНЖЕДСПЮ НЙПСЦКЪЕР ВХЯКН Й АКХФЮИЬЕИ ЯБЕПУС ЯРЕОЕМХ
-// АЮГШ, МЮОПХЛЕП f(13,2)=16
-static MemSize roundup_to_power_of (MemSize n, MemSize base)
-{
-    MemSize result;
-    if (n==1)  return 1;
-    for (result=base, n--; (n/=base) != 0; result *= base);
-    return result;
-}
+int fortuna_size (void);
 
+
+#ifdef __cplusplus
+}       // extern "C"
 #endif
+
+#endif  // FREEARC_COMPRESSION_H
