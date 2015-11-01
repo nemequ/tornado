@@ -1,3 +1,5 @@
 /tor
-/tor-small
+/tor64
+/tor-static
+/tor64-static
 /*.exe

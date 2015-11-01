@@ -1,6 +1,6 @@
 Date        Version  New features compared to previous version
 
-2007-04-16  0.1      Bytecoder, bitcoder and 2^n semi-dynamic RC coder
+2007-04-16  0.1      Bytecoder, bitcoder and 2^n semi-dynamic RangeCoder
                      Greedy parsing
                      Only 4+ byte matches
                      Hashtable matchfinders: simple and caching
@@ -28,3 +28,20 @@ Date        Version  New features compared to previous version
 2008-06-02  0.4a     Fixed bug in Huffman coder: unstable sorting
                      Win32 & Linux versions
 
+2008-10-28  0.4b     Added -11:c1 .. -11:c3 modes
+
+2014-01-15  0.5      Removed modes -6 -8 -10 -12, renumerated -7/9/11 to -6/7/8
+                     -7/-8: 1% better compression and 5-20% better speed due to use of ht5
+                     New -9..-11 modes: 2gb hash and ht5..ht7 match finders
+                     In small tornado.exe -c1..-c3 available for -7..-11 modes
+                     Support for -l not power of 2   (in all matchfinders?)
+                     Options -ah, -al, -t#, -cpu, -q, -delete, stats->stderr
+                     Checks at decoding in order to prevent segfaults
+                     MSVC/ICL compatibility, use of wall-clock times
+                     Linux: 64-bit file offsets!
+                     PowerPC (big-endian cpus) compatibility, thanks to Joachim Henke
+                     64-bit compilers support!
+                     -3 mode compression improved by 2-3%
+                     2mb hash in -4/-5 modes improved speed by 20-30%
+                     Fixed long-standing decompression bug (table split across 2 write chunks)
+                     Removed CHECK_FOR_DATA_TABLE(2) in -3/-4 modes
