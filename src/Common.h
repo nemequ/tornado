@@ -208,8 +208,11 @@ static inline int is_subdir_of (char *subdir, char *dir)
 #include <io.h>
 #include <fcntl.h>
 #include <tchar.h>
+#include <share.h>
 typedef TCHAR* CFILENAME;
 static inline int create_dir (CFILENAME name)   {return _tmkdir(name);}
+#define file_open_read_binary(filename)         _fsopen ((filename), "rb", _SH_DENYWR)
+#define file_open_write_binary(filename)        _fsopen ((filename), "wb", _SH_DENYWR)
 #ifndef __GNUC__
 #define file_seek(stream,pos)                   (_fseeki64(stream, (pos), SEEK_SET))
 #define file_seek_cur(stream,pos)               (_fseeki64(stream, (pos), SEEK_CUR))
@@ -266,6 +269,8 @@ typedef char  TCHAR;
 typedef int (*FARPROC) (void);
 
 static inline int create_dir (CFILENAME name)   {return mkdir(name,0777);}
+#define file_open_read_binary(filename)         fopen ((filename), "rb")
+#define file_open_write_binary(filename)        fopen ((filename), "wb")
 #define file_seek(stream,pos)                   (fseek(stream, (pos), SEEK_SET))
 #define get_flen(stream)                        (myfilelength( fileno (stream)))
 #define set_binary_mode(file)
@@ -338,6 +343,7 @@ CFILENAME GetTempDir (void);                               // Return last value 
 #  define prefetch(var)   ((void)0)
 #endif
 
+#define CACHE_ROW 64  /* size of typical CPU cache line: from long data only every 64'th byte should be prefetched */
 
 #ifdef FREEARC_INTEL_BYTE_ORDER
 
@@ -618,14 +624,9 @@ extern jmp_buf jumper;
 #define throw()
 #endif
 
-#ifdef FREEARC_STANDALONE_TORNADO
-#define MidAlloc(size) malloc(size)
-#define MidFree(address) free(address)
-#define BigAlloc(size) malloc(size)
-#define BigFree(address) free(address)
-#else
 void *MyAlloc(size_t size) throw();
 void MyFree(void *address) throw();
+extern bool AllocTopDown;
 #ifdef FREEARC_WIN
 enum LPType {DEFAULT, FORCE, DISABLE, TRY};
 extern LPType DefaultLargePageMode;
@@ -638,7 +639,7 @@ void BigFree(void *address) throw();
 #define MidFree(address) MyFree(address)
 #define BigAlloc(size) MyAlloc(size)
 #define BigFree(address) MyFree(address)
-#endif
+#endif // !FREEARC_WIN
 
 
 // ****************************************************************************
@@ -652,11 +653,11 @@ char*subst (char *original, char *from, char *to);                     // гЮЛ
 char*trim_spaces (char *s);                                            // оПНОСЯЙЮЕР ОПНАЕКШ Б МЮВЮКЕ ЯРПНЙХ Х САХПЮЕР ХУ Б ЙНМЖЕ, ЛНДХТХЖХПСЪ ЯРПНЙС
 char *str_replace_n (char *orig, char *from, int how_many, char *to);  // Replace from:how_many substring and put result in new allocated area
 char *str_replace   (char *orig, char *from, char *to);                // Replace substring and put result in new allocated area
-#endif // !FREEARC_STANDALONE_TORNADO
 MemSize parseInt   (char *param, int *error);                          // If the string param contains an integer, return it - otherwise set error=1
 MemSize parseMem   (char *param, int *error, DEFAULT(char spec,'^'));  // Similar, but the string param may have a suffix b/k/m/g/^, representing units of memory, or in the case of '^' (default, overridden by spec parameter), the relevant power of 2
 uint64  parseMem64 (char *param, int *error, DEFAULT(char spec,'^'));  // Similar, but the string param may have a suffix b/k/m/g/^, representing units of memory, or in the case of '^' (default, overridden by spec parameter), the relevant power of 2
 void showMem (MemSize mem, char *result);                              // Returns string with the amount of memory
+void showMem64 (uint64 mem, char *result);                             // Returns string with the amount of memory
 void encode16 (const BYTE *src, int srcSize, char *dst);               // йНДХПНБЮМХЕ ЯРПНЙХ Б ЬЕЯРМЮДЖЮРЕПХВМШИ БХД ОКЧЯ \0
 void decode16 (const char *src, BYTE *dst);                            // дЕЙНДХПНБЮМХЕ ЯРПНЙХ, ГЮОХЯЮММНИ Б ЬЕЯРМЮДЖЮРЕПХВМНЛ БХДЕ, Б ОНЯКЕДНБЮРЕКЭМНЯРЭ АЮИР
 void buggy_decode16 (const char *src, BYTE *dst);                      // ньханвмне ДЕЙНДХПНБЮМХЕ ЯРПНЙХ, ГЮОХЯЮММНИ Б ЬЕЯРМЮДЖЮРЕПХВМНЛ БХДЕ, Б ОНЯКЕДНБЮРЕКЭМНЯРЭ АЮИР
@@ -706,6 +707,11 @@ static inline int lb (MemSize n)
 #endif
     return result;
 }
+
+#if __INTEL_COMPILER || (_MSC_VER && _MSC_VER<1800)
+static inline double log2  (double x)  {return log(x)/log(2.);}
+static inline double round (double x)  {return (x > 0.0) ? floor(x + 0.5) : ceil(x - 0.5);}
+#endif
 
 // щРЮ ОПНЖЕДСПЮ НЙПСЦКЪЕР ВХЯКН Й АКХФЮИЬЕИ ЯБЕПУС ЯРЕОЕМХ
 // АЮГШ, МЮОПХЛЕП f(13,2)=16
@@ -792,6 +798,7 @@ char  *oem_to_utf8   (const char  *oem,   char  *utf8);   // Converts OEM string
 #ifndef FREEARC_NO_TIMING
 // бШБНД ГЮЦНКНБЙЮ НЙМЮ
 void EnvSetConsoleTitle (CFILENAME title);  // сЯРЮМНБХРЭ ГЮЦНКНБНЙ ЙНМЯНКЭМНЦН НЙМЮ
+void EnvSetConsoleTitleA (char *title);
 void EnvResetConsoleTitle (void);  // бНЯЯРЮМНБХРЭ ГЮЦНКНБНЙ, ЙНРНПШИ АШК Б МЮВЮКЕ ПЮАНРШ ОПНЦПЮЛЛШ
 
 // Timing execution

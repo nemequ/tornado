@@ -1,6 +1,10 @@
-// (c) Bulat Ziganshin <Bulat.Ziganshin@gmail.com>
+// Code for data tables preprocessing (subtracting) which improves compression
+//
+// (c) Bulat Ziganshin
 // (c) Joachim Henke
-// GPL'ed code for data tables preprocessing (subtracting) which improves compression
+// This code is provided on the GPL license.
+// If you need a commercial license to use the code, please write to Bulat.Ziganshin@gmail.com
+
 #include "Compression.h"
 
 // Maximum size of one table row at compression

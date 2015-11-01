@@ -7,7 +7,7 @@
 int jmpready = FALSE;
 jmp_buf jumper;
 
-#ifndef FREEARC_STANDALONE_TORNADO
+bool AllocTopDown = true;
 
 // ****************************************************************************
 // MEMORY ALLOCATION **********************************************************
@@ -92,12 +92,13 @@ void *BigAlloc (int64 size, LPType LargePageMode) throw()
   {
     static SIZE_T page = GetLargePageSize();
     const DWORD MY_MEM_LARGE_PAGES = 0x20000000;
+    alloc_debug_printf((stderr, "  page = %x", int(page)));
     if (page  &&  (size>=page || LargePageMode==FORCE))
-      address = ::VirtualAlloc(0, roundUp(size,page), MEM_COMMIT | MY_MEM_LARGE_PAGES | MEM_TOP_DOWN, PAGE_READWRITE);
+      address = ::VirtualAlloc(0, roundUp(size,page), MEM_COMMIT | (AllocTopDown? MEM_TOP_DOWN : 0) | MY_MEM_LARGE_PAGES, PAGE_READWRITE);
   }
 
   if (address==0 && LargePageMode!=FORCE)
-    address = ::VirtualAlloc(0, size, MEM_COMMIT | MEM_TOP_DOWN, PAGE_READWRITE);
+    address = ::VirtualAlloc(0, size, MEM_COMMIT | (AllocTopDown? MEM_TOP_DOWN : 0), PAGE_READWRITE);
 
   alloc_debug_printf((stderr, "  addr = %p;  count = %5d;  Alloc_Big %10d bytes\n", address, g_allocCountBig++, size));
   return address;
@@ -210,8 +211,6 @@ char *str_replace (char *orig, char *from, char *to)
   else    return strdup_msg (orig);
 }
 
-#endif // !FREEARC_STANDALONE_TORNADO
-
 // If the string param contains an integer, return it - otherwise set error=1
 MemSize parseInt (char *param, int *error)
 {
@@ -250,6 +249,16 @@ MemSize parseMem (char *param, int *error, char spec)
 void showMem (MemSize mem, char *result)
 {
        if (mem%gb==0) sprintf (result, "%.0lfgb", double(mem/gb));
+  else if (mem%mb==0) sprintf (result, "%.0lfmb", double(mem/mb));
+  else if (mem%kb==0) sprintf (result, "%.0lfkb", double(mem/kb));
+  else                sprintf (result, "%.0lfb",  double(mem));
+}
+
+// Returns a string with the amount of memory
+void showMem64 (uint64 mem, char *result)
+{
+  if(mem%terabyte==0) sprintf (result, "%.0lftb", double(mem/terabyte));
+  else if (mem%gb==0) sprintf (result, "%.0lfgb", double(mem/gb));
   else if (mem%mb==0) sprintf (result, "%.0lfmb", double(mem/mb));
   else if (mem%kb==0) sprintf (result, "%.0lfkb", double(mem/kb));
   else                sprintf (result, "%.0lfb",  double(mem));
@@ -798,17 +807,25 @@ void removeTemporaryFiles (void)
 #ifdef FREEARC_WIN
 #include <windows.h>
 
-TCHAR Saved_Title[MY_FILENAME_MAX];
-bool Saved = FALSE;
+TCHAR Saved_Title[MY_FILENAME_MAX+1000];
+bool Saved = FALSE,  SavedA = FALSE;
 
 // сЯРЮМНБХРЭ ГЮЦНКНБНЙ ЙНМЯНКЭМНЦН НЙМЮ
 void EnvSetConsoleTitle (TCHAR *title)
 {
-  if (!Saved) {
-    GetConsoleTitle (Saved_Title, MY_FILENAME_MAX);
+  if (!Saved && !SavedA) {
+    GetConsoleTitle (Saved_Title, sizeof(Saved_Title)/sizeof(*Saved_Title));
     Saved = TRUE;
   }
   SetConsoleTitle (title);
+}
+void EnvSetConsoleTitleA (char *title)
+{
+  if (!Saved && !SavedA) {
+    GetConsoleTitleA ((char*)Saved_Title, sizeof(Saved_Title));
+    SavedA = TRUE;
+  }
+  SetConsoleTitleA (title);
 }
 
 // бНЯЯРЮМНБХРЭ ГЮЦНКНБНЙ, ЙНРНПШИ АШК Б МЮВЮКЕ ПЮАНРШ ОПНЦПЮЛЛШ
@@ -818,6 +835,10 @@ void EnvResetConsoleTitle (void)
     SetConsoleTitle (Saved_Title);
     Saved = FALSE;
   }
+  if (SavedA) {
+    SetConsoleTitleA ((char*)Saved_Title);
+    SavedA = FALSE;
+  }
 }
 
 #else // !FREEARC_WIN
@@ -826,6 +847,10 @@ void EnvSetConsoleTitle (char *title)
 {
   //Commented out since 1) we can't restore title on exit and 2) it looks unusual on Linux
   //  fprintf (stderr, "\033]0;%s\a", title);
+}
+void EnvSetConsoleTitleA (char *title)
+{
+  // See EnvSetConsoleTitle() definition
 }
 
 void EnvResetConsoleTitle (void)    {};
