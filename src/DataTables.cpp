@@ -1,6 +1,6 @@
 // (c) Bulat Ziganshin <Bulat.Ziganshin@gmail.com>
 // GPL'ed code for data tables preprocessing (substracting) which improves compression
-#include "Compression.h"
+#include "../Compression.h"
 
 
 // Utility part ******************************************************************************
@@ -29,6 +29,7 @@ static void undiff_table (int N, BYTE *table_start, int table_len)
 
 // Compression part ******************************************************************************
 
+#ifndef FREEARC_DECOMPRESS_ONLY
 // Check the following data for presence of table which will be better compressed
 // after subtraction of subsequent elements
 // бШВХРЮМХЕ МЮВХМЮЕРЯЪ ЯН ЯКЕДСЧЫЕЦН ЩКЕЛЕМРЮ ВРНАШ ЯНУПЮМХРЭ БЮКХДМШЛХ ДЮММШЕ Б match finders
@@ -71,6 +72,7 @@ static bool check_for_data_table (int N, int &type, int &items, byte *p, byte *b
 
     return FALSE;
 }
+#endif
 
 
 // Decompression part ******************************************************************************
@@ -125,8 +127,8 @@ DataTables::DataTables()
 // Add description of one more datatable to the list
 void DataTables::add (int _table_type, BYTE *_table_start, int _table_len)
 {
-    CHECK (curtable<tables_end,          ("\nFatal error: DataTables::add() called without prior filled() check\n"));
-    CHECK (_table_type<=MAX_TABLE_TYPE,  ("\nFatal error: DataTables::add() called with _table_type=%d that is larger than maximum allowed %d\n", _table_type, MAX_TABLE_TYPE));
+    CHECK (curtable<tables_end,          (s,"Fatal error: DataTables::add() called without prior filled() check"));
+    CHECK (_table_type<=MAX_TABLE_TYPE,  (s,"Fatal error: DataTables::add() called with _table_type=%d that is larger than maximum allowed %d", _table_type, MAX_TABLE_TYPE));
     curtable->table_type  = _table_type;
     curtable->table_start = _table_start;
     curtable->table_len   = _table_len;
@@ -206,8 +208,8 @@ void DataTables::diff_tables (BYTE *write_end)
 // list entries also need to be shifted
 void DataTables::shift (BYTE *old_pos, BYTE *new_pos)
 {
-    CHECK (old_pos > new_pos,    ("\nFatal error: DataTables::shift() was called with reversed arguments order\n"));
-    CHECK (curtable <= tables+1, ("\nFatal error: DataTables::shift() called when list of tables contains more than one entry\n"));
+    CHECK (old_pos > new_pos,    (s,"Fatal error: DataTables::shift() was called with reversed arguments order"));
+    CHECK (curtable <= tables+1, (s,"Fatal error: DataTables::shift() called when list of tables contains more than one entry"));
     for (DataTableEntry *p=tables; p<curtable; p++) {
         BYTE *old = p->table_start;
         p->table_start -= old_pos-new_pos;

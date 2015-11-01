@@ -65,7 +65,7 @@ struct LZ77_ByteCoder : OutputByteStream
     // Send info about diffed table. type=1..4 and len is number of table elements
     void encode_table (int type, int len)
     {
-        CHECK( 0, ("\nFatal error: encode_table() isn't implemented in this coder\n"));
+        CHECK( 0, (s,"Fatal error: encode_table() isn't implemented in this coder"));
     }
 };
 
@@ -98,7 +98,7 @@ struct LZ77_ByteDecoder : InputByteStream
     uint     flagpos;
 
     // Init decoder
-    LZ77_ByteDecoder (CALLBACK_FUNC *callback, VOID_FUNC *auxdata) : InputByteStream(callback, auxdata)  {flagpos=1;}
+    LZ77_ByteDecoder (CALLBACK_FUNC *callback, VOID_FUNC *auxdata, UINT bufsize) : InputByteStream(callback, auxdata, bufsize)  {flagpos=1;}
 
     // Decode next element and return true if it's a literal
     uint is_literal (void)
@@ -244,7 +244,7 @@ DistanceCoder::DistanceCoder (uint _extra_bits[], uint extra_bits_size) : VLE (0
     for ( ; dist < 512; code++) {
         xextra_bits[code] = _extra_bits[code];
         xbase_value[code] = dist << 8;
-        CHECK( _extra_bits[code] >= 8, ("\nFatal error: DistanceCoder::_extra_bits[%d] = %d is lower than minimum allowed value 8\n", code, _extra_bits[code]));
+        CHECK( _extra_bits[code] >= 8, (s,"Fatal error: DistanceCoder::_extra_bits[%d] = %d is lower than minimum allowed value 8", code, _extra_bits[code]));
         for (uint n = 0; n < (1<<(_extra_bits[code]-8)); n++) {
             xcode[512 + dist++] = (uchar)code;
         }
@@ -253,7 +253,7 @@ DistanceCoder::DistanceCoder (uint _extra_bits[], uint extra_bits_size) : VLE (0
     for ( ; code < extra_bits_size; code++) {  // distances up to 1G
         xextra_bits[code] = _extra_bits[code];
         xbase_value[code] = dist << 16;
-        CHECK( _extra_bits[code] >= 16, ("\nFatal error: DistanceCoder::_extra_bits[%d] = %d is lower than minimum allowed value 8\n", code, _extra_bits[code]));
+        CHECK( _extra_bits[code] >= 16, (s,"Fatal error: DistanceCoder::_extra_bits[%d] = %d is lower than minimum allowed value 8", code, _extra_bits[code]));
         for (uint n = 0; n < (1<<(_extra_bits[code]-16)); n++) {
             if (1024+dist >= elements(xcode))  break;
             xcode[1024 + dist++] = (uchar)code;
@@ -314,7 +314,7 @@ struct LZ77_BitCoder : OutputBitStream
     // Send info about diffed table. type=1..4 and len is number of table elements
     void encode_table (int type, int len)
     {
-        CHECK( 0, ("\nFatal error: encode_table() isn't implemented in this coder\n"));
+        CHECK( 0, (s,"Fatal error: encode_table() isn't implemented in this coder"));
     }
 };
 
@@ -346,7 +346,7 @@ void LZ77_BitCoder::finish()
 struct LZ77_BitDecoder : InputBitStream
 {
     // Init decoder
-    LZ77_BitDecoder (CALLBACK_FUNC *callback, VOID_FUNC *auxdata) : InputBitStream(callback, auxdata) {};
+    LZ77_BitDecoder (CALLBACK_FUNC *callback, VOID_FUNC *auxdata, UINT bufsize) : InputBitStream(callback, auxdata, bufsize) {};
 
     uint x;  // Temporary value used for storing first 9 bits of code
 
@@ -517,7 +517,7 @@ template <class Decoder>
 struct LZ77_Decoder : Decoder
 {
     // Init decoder
-    LZ77_Decoder (CALLBACK_FUNC *callback, VOID_FUNC *auxdata) : Decoder (callback, auxdata, CODES)
+    LZ77_Decoder (CALLBACK_FUNC *callback, VOID_FUNC *auxdata, UINT bufsize) : Decoder (callback, auxdata, bufsize, CODES)
     {
         iterate_var(i,REPDIST_CODES)  prevdists[i]=0;
         prevdist = prevdists+REPDIST_CODES;

@@ -1,4 +1,4 @@
-#include "Compression.h"
+#include "../Compression.h"
 
 int tor_compress   (PackMethod m, CALLBACK_FUNC *callback, VOID_FUNC *auxdata);
 int tor_decompress (CALLBACK_FUNC *callback, VOID_FUNC *auxdata);
@@ -30,7 +30,7 @@ public:
   virtual void ShowCompressionMethod (char *buf);
 
   // оНКСВХРЭ/СЯРЮМНБХРЭ НАЗ╦Л ОЮЛЪРХ, ХЯОНКЭГСЕЛНИ ОПХ СОЮЙНБЙЕ/ПЮЯОЮЙНБЙЕ, ПЮГЛЕП ЯКНБЮПЪ ХКХ ПЮГЛЕП АКНЙЮ
-  virtual MemSize GetCompressionMem     (void)         {return m.hashsize + m.buffer;}
+  virtual MemSize GetCompressionMem     (void)         {return m.hashsize + m.buffer + tornado_compressor_outbuf_size(m.buffer);}
   virtual MemSize GetDecompressionMem   (void)         {return m.buffer;}
   virtual MemSize GetDictionary         (void)         {return m.buffer;}
   virtual MemSize GetBlockSize          (void)         {return 0;}

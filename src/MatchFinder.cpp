@@ -1,22 +1,8 @@
 // LZ77 model *************************************************************************************
-// Already tried:
-//     no lz if len small and dist large: don't have much sense with our MINLEN=4
-//     hash4+3: only 1% gain even on ghc.exe
-//     hash5+4: 48->46.7 mb but 2x slower (22->46sec: 240mb compressed using 16mb hash)
-// To do:
-//     -0x65a8e9b4 for hash
-//     +combined len+dist encoding a-la cabarc - will make decoding a bit faster, but who cares? :)
-//     -save into hash records unused part of hash value in order to make
-//         fast check of usability of this hash slot (like it is already
-//         done in REP); would be especially helpful on larger hashes
-//     -save into hash record 4 bits of p[5] - would be useful to skip trying second..fourth hash records
-//     +save into hash record 4 bytes of data
-//     +lazy search (and return of 3-byte strings) for highest compression mode
-//     ST4/BWT sorting for exhaustive string searching
 
 // Maximum number of bytes used for hashing in any match finder.
 // If this value will be smaller than real, we can hash bytes in buf that are not yet read
-#define MAX_HASHED_BYTES 4
+#define MAX_HASHED_BYTES 12
 
 
 #ifdef DEBUG
@@ -269,12 +255,14 @@ struct CachingMatchFinderN : BaseMatchFinder
         // (there are five loops here - one used before any match is found,
         //  three are used when a match of size 4/5/6 already found,
         //  and one used when match of size 7+ already found)
-len0:
-        while (table<tabend) {
-            // Read next ptr/key from hash and save here previous pair (shifted from previous position)
-            BYTE *q0=q1;  q1 = *table;         *table++ = q0;
-            UINT  v0=v1;  v1 = (UINT) *table;  *table++ = (BYTE*)v0;
+// Read next ptr/key from hash and save here previous pair (shifted from previous position)
+#define next_pair()                                                    \
+            BYTE *q0=q1;  q1 = *table;         *table++ = q0;          \
+            UINT  v0=v1;  v1 = (UINT) *table;  *table++ = (BYTE*)v0;   \
             UINT t = v1 ^ key(p);
+len0:
+        while (table!=tabend) {
+            next_pair();
             if ((t&0xff) == 0) {
                      if (t==0)        goto len7;
                 else if (t&0xff00)    goto len4;
@@ -285,10 +273,8 @@ len0:
         return MINLEN-1;
 
 len4:   q=q1;
-        while (table<tabend) {
-            BYTE *q0=q1;  q1 = *table;         *table++ = q0;
-            UINT  v0=v1;  v1 = (UINT) *table;  *table++ = (BYTE*)v0;
-            UINT t = v1 ^ key(p);
+        while (table!=tabend) {
+            next_pair();
             if ((t&0xffff) == 0) {
                      if (t==0)        goto len7;
                 else if (t&0xff0000)  goto len5;
@@ -298,10 +284,8 @@ len4:   q=q1;
         return p-q<48*kb && p+4<=bufend && value32(p)==value32(q)?  4 : MINLEN-1;
 
 len5:   q=q1;
-        while (table<tabend) {
-            BYTE *q0=q1;  q1 = *table;         *table++ = q0;
-            UINT  v0=v1;  v1 = (UINT) *table;  *table++ = (BYTE*)v0;
-            UINT t = v1 ^ key(p);
+        while (table!=tabend) {
+            next_pair();
             if ((t&0xffffff) == 0) {
                      if (t==0)        goto len7;
                 else                  goto len6;
@@ -310,10 +294,8 @@ len5:   q=q1;
         return p-q<192*kb && p+5<=bufend && value32(p)==value32(q) && p[4]==q[4]?  5 : MINLEN-1;
 
 len6:   q=q1;
-        while (table<tabend) {
-            BYTE *q0=q1;  q1 = *table;         *table++ = q0;
-            UINT  v0=v1;  v1 = (UINT) *table;  *table++ = (BYTE*)v0;
-            UINT t = v1 ^ key(p);
+        while (table!=tabend) {
+            next_pair();
             if (t == 0)                goto len7;
         }
         return p-q<1*mb && p+6<=bufend && value32(p)==value32(q) && value16(p+4)==value16(q+4)?  6 : MINLEN-1;
@@ -325,10 +307,8 @@ len7:   len = MINLEN-1;
             for (            ;  p+len<bufend   && p[len]==q1[len];                  len++);
         }
 
-        while (table<tabend) {
-            BYTE *q0=q1;  q1 = *table;         *table++ = q0;
-            UINT  v0=v1;  v1 = (UINT) *table;  *table++ = (BYTE*)v0;
-            UINT t = v1 ^ key(p);
+        while (table!=tabend) {
+            next_pair();
             if (t == 0  &&  p[len]==q1[len]  &&  value32(p)==value32(q1)) {
                 UINT len1;
                 for (len1=MINLEN-1;  p+len1+4<bufend && value32(p+len1)==value32(q1+len1);  len1+=4);
@@ -337,6 +317,7 @@ len7:   len = MINLEN-1;
             }
         }
         return len;
+#undef next_pair
     }
 
     // Update half of hash row corresponding to string pointed by p
@@ -358,6 +339,142 @@ len7:   len = MINLEN-1;
         for (int i=2; i<len-1; i+=step)
             update_hash1 (p+i);
         if (len>3) update_hash1 (p+len-1);
+    }
+};
+
+
+// One more caching match finder. This one doesn't shift data in hash rows,
+// it keeps head index instead
+struct CycledCachingMatchFinderN : BaseMatchFinder
+{
+    BYTE* Head;
+    CycledCachingMatchFinderN (BYTE *buf, int hashsize, int _hash_row_width)
+        : BaseMatchFinder (buf, hashsize, _hash_row_width*2)
+    {
+        alloced++;
+        hash_row_width = _hash_row_width;
+        UINT HeadSize = HashSize/(_hash_row_width*2);
+        Head = (BYTE*) malloc (sizeof(BYTE) * HeadSize);
+        HashShift = 32-lb(HeadSize);
+        //printf("\n<%d,%d,%d>\n", HashSize, HeadSize, HashShift);
+        HashMask  = ~0;
+    }
+    ~CycledCachingMatchFinderN() { alloced--; free(Head); free(HTable); }
+
+    // hash function
+    uint hash (uint x)    {return ((x*123456791) >> HashShift);}
+
+    // Called at start
+    void clear_hash (BYTE *buf)
+    {
+        if (HTable)  iterate_var(i,HashSize)  HTable[i]=NULL;
+        if (Head)    iterate_var(i,HashSize/(hash_row_width*2))  Head[i]=0;
+    }
+
+    void shift (BYTE *buf, int shift)
+    {
+        for (int i=0; i<HashSize; i+=2)
+            HTable[i]  =  HTable[i] > buf+shift?  HTable[i]-shift  :  NULL;
+    }
+    // Key value stored in hash for each string
+    uint key (BYTE *p)
+    {
+        return value32(p+3);
+    }
+    uint find_matchlen (byte *p, void *bufend, UINT prevlen)
+    {
+        UINT len;                  // Length of largest string already found
+        UINT h = hash(value(p));   // Hash key of string for which we perform match search
+        UINT i = --Head[h];
+        // Pointers to the current hash element and end of hash row
+        BYTE **rowstart = HTable+h*hash_row_width*2,  **rowend = rowstart + hash_row_width*2;
+        BYTE **table = rowstart + (i&(hash_row_width-1))*2,  **tabend = table;
+        // save current ptr and its key to the first hash slot
+        *table++ = p;
+        *table++ = (BYTE*)key(p);    if (table==rowend)  table = rowstart;
+
+        // Check hash elements, searching for longest match,
+        // while shifting entire row contents towards end
+        // (there are five loops here - one used before any match is found,
+        //  three are used when a match of size 4/5/6 already found,
+        //  and last one used when match of size 7+ already found)
+// Read next ptr/key pair from hash
+#define next_pair()                                                    \
+            BYTE *q1 = *table++;  if(!q1) break;                       \
+            UINT  v1 = (UINT) *table++;                                \
+            if (table==rowend)  table = rowstart;                      \
+            UINT t = v1 ^ key(p);
+
+len0:   while (table!=tabend) {
+            next_pair();
+            if ((t&0xff) == 0) {
+                q=q1;if (t==0)        goto len7;
+                else if (t&0xff00)    goto len4;
+                else if (t&0xff0000)  goto len5;
+                else                  goto len6;
+            }
+        }
+        return MINLEN-1;
+
+len4:   while (table!=tabend) {
+            next_pair();
+            if ((t&0xffff) == 0) {
+                q=q1;if (t==0)        goto len7;
+                else if (t&0xff0000)  goto len5;
+                else                  goto len6;
+            }
+        }
+        return p-q<48*kb && p+4<=bufend && value32(p)==value32(q)?  4 : MINLEN-1;
+
+len5:   while (table!=tabend) {
+            next_pair();
+            if ((t&0xffffff) == 0) {
+                q=q1;if (t==0)        goto len7;
+                else                  goto len6;
+            }
+        }
+        return p-q<192*kb && p+5<=bufend && value32(p)==value32(q) && p[4]==q[4]?  5 : MINLEN-1;
+
+len6:   while (table!=tabend) {
+            next_pair();
+            q=q1;if (t==0)            goto len7;
+        }
+        return p-q<1*mb && p+6<=bufend && value32(p)==value32(q) && value16(p+4)==value16(q+4)?  6 : MINLEN-1;
+
+len7:   len = MINLEN-1;
+        if (value32(p)==value32(q)) {
+            for (len=MINLEN-1;  p+len+4<bufend && value32(p+len)==value32(q+len);  len+=4);
+            for (            ;  p+len<bufend   && p[len]==q[len];                  len++);
+        }
+
+        while (table!=tabend) {
+            next_pair();
+            if (t == 0  &&  p[len]==q1[len]  &&  value32(p)==value32(q1)) {
+                UINT len1;
+                for (len1=MINLEN-1;  p+len1+4<bufend && value32(p+len1)==value32(q1+len1);  len1+=4);
+                for (             ;  p+len1<bufend   && p[len1]==q1[len1];                  len1++);
+                if (len1>len)  len=len1, q=q1;
+            }
+        }
+        return len;
+#undef next_pair
+    }
+
+    // Update hash row corresponding to string pointed by p
+    // (hash updated via this procedure only when skipping match contents)
+    void update_hash1 (BYTE *p)
+    {
+        UINT h = hash(value(p));
+        UINT i = --Head[h];
+        BYTE **table = HTable+h*hash_row_width*2 + (i&(hash_row_width-1))*2;
+        table[0] = p;
+        table[1] = (BYTE*)key(p);
+    }
+    // Skip match starting from p with length len and update hash with strings using given step
+    void update_hash (BYTE *p, UINT len, UINT step)
+    {
+        for (int i=1; i<len; i++)
+            update_hash1 (p+i);
     }
 };
 
@@ -456,7 +573,7 @@ struct LazyMatching
 
 
 // This is MF transformer which adds separate small hashes for searching 2/3-byte strings
-template <class MatchFinder>
+template <class MatchFinder, int HASH3_LOG, int HASH2_LOG, bool FULL_UPDATE>
 struct Hash3
 {
     MatchFinder mf;
@@ -471,8 +588,8 @@ struct Hash3
 
     uint min_length()     {return 2;}
     byte *get_matchptr()  {return q;}
-    uint hash (uint x)    {return (x*234567913) >> 20;}
-    uint hash2(uint x)    {return (x*123456791) >> 22;}
+    uint hash (uint x)    {return (x*234567913) >> (32-HASH3_LOG);}
+    uint hash2(uint x)    {return (x*123456791) >> (32-HASH2_LOG);}
 
     uint find_matchlen (byte *p, void *bufend, UINT prevlen)
     {
@@ -496,7 +613,7 @@ struct Hash3
                 }
             }
         }
-        // Update 3-byte hash
+        // Update 3-byte & 2-byte hashes
         UINT h = hash(value24(p));  HTable[h] = p;
              h = hash2(value16(p)); HTable2[h] = p;
         // And return 4+-byte match
@@ -505,52 +622,57 @@ struct Hash3
 
     void update_hash1 (BYTE *p)
     {
-        UINT h = hash(value24(p));  HTable[h] = p;
-        //   h = hash2(value16(p)); HTable2[h] = p;   - HTable2 not updated here
+        UINT              h = hash(value24(p));  HTable[h]  = p;
+        if (FULL_UPDATE) {h = hash2(value16(p)); HTable2[h] = p;}
     }
     void update_hash (BYTE *p, UINT len, UINT step)
     {
         mf.update_hash (p, len, step);
-        if (len>1) update_hash1 (p+1);
-        if (len>3) update_hash1 (p+len-1);
+        if (FULL_UPDATE) {
+            for (int i=1; i<len; i++)
+                update_hash1 (p+i);
+        } else {
+            if (len>1)  update_hash1 (p+1);
+            if (len>3)  update_hash1 (p+len-1);
+        }
     }
     // Invalidate previously found match
     void invalidate_match ()   {mf.invalidate_match();}
 };
 
-template <class MatchFinder>
-Hash3<MatchFinder> :: Hash3 (BYTE *buf, int hashsize, int hash_row_width)
-    : mf (buf, hashsize, hash_row_width)
+template <class MatchFinder, int HASH3_LOG, int HASH2_LOG, bool FULL_UPDATE>
+Hash3<MatchFinder, HASH3_LOG, HASH2_LOG, FULL_UPDATE>
+  :: Hash3 (BYTE *buf, int hashsize, int hash_row_width)  :  mf (buf, hashsize, hash_row_width)
 {
-    HashSize = 4*kb;
-    HashSize2= 1*kb;
-    HTable = (BYTE**) malloc (sizeof(BYTE*) * HashSize); alloced++;
-    HTable2= (BYTE**) malloc (sizeof(BYTE*) * HashSize2);
+    HashSize  = 1 << HASH3_LOG;
+    HashSize2 = 1 << HASH2_LOG;
+    HTable  = (BYTE**) malloc (sizeof(BYTE*) * HashSize); alloced++;
+    HTable2 = (BYTE**) malloc (sizeof(BYTE*) * HashSize2);
     clear_hash (buf);
 }
 
-template <class MatchFinder>
-Hash3<MatchFinder> :: ~Hash3()
+template <class MatchFinder, int HASH3_LOG, int HASH2_LOG, bool FULL_UPDATE>
+Hash3<MatchFinder, HASH3_LOG, HASH2_LOG, FULL_UPDATE> :: ~Hash3()
 {
     alloced--; free(HTable); free(HTable2);
 }
 
-template <class MatchFinder>
-int Hash3<MatchFinder> :: error()
+template <class MatchFinder, int HASH3_LOG, int HASH2_LOG, bool FULL_UPDATE>
+int Hash3<MatchFinder, HASH3_LOG, HASH2_LOG, FULL_UPDATE> :: error()
 {
     return HTable==NULL || HTable2==NULL?  FREEARC_ERRCODE_NOT_ENOUGH_MEMORY : mf.error();
 }
 
-template <class MatchFinder>
-void Hash3<MatchFinder> :: clear_hash (BYTE *buf)
+template <class MatchFinder, int HASH3_LOG, int HASH2_LOG, bool FULL_UPDATE>
+void Hash3<MatchFinder, HASH3_LOG, HASH2_LOG, FULL_UPDATE> :: clear_hash (BYTE *buf)
 {
     mf.clear_hash (buf);
     if (HTable)  iterate_var(i,HashSize)   HTable[i] =buf+1;
     if (HTable2) iterate_var(i,HashSize2)  HTable2[i]=buf+1;
 }
 
-template <class MatchFinder>
-void Hash3<MatchFinder> :: shift (BYTE *buf, int shift)
+template <class MatchFinder, int HASH3_LOG, int HASH2_LOG, bool FULL_UPDATE>
+void Hash3<MatchFinder, HASH3_LOG, HASH2_LOG, FULL_UPDATE> :: shift (BYTE *buf, int shift)
 {
     mf.shift (buf, shift);
     iterate_var(i,HashSize)  HTable[i] = HTable[i] >buf+shift? HTable [i]-shift : buf+1;

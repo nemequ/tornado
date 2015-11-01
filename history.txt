@@ -1,0 +1,30 @@
+Date        Version  New features compared to previous version
+
+2007-04-16  0.1      Bytecoder, bitcoder and 2^n semi-dynamic RC coder
+                     Greedy parsing
+                     Only 4+ byte matches
+                     Hashtable matchfinders: simple and caching
+                     Blockwise compression
+
+2007-05-11  0.2      Huffman coder
+                     Lazy parsing
+                     3-byte matches
+                     Dropping too far matches
+                     Sliding window
+                     Gzip-like cmdline interface
+
+2007-07-25  0.25     Repdist, repboth and repchar codes
+                     2-byte matches
+                     Improved lz parsing
+                     Delta filter
+
+2008-03-13  0.3      Huffman decoder with variable block size
+                     Tested on 100 gb of data and fixed all bugs found
+
+2008-04-08  0.4      Cycling matchfinder
+                     Large, updated at each step hashes for 2/3-byte strings
+                     More interactive user interface
+
+2008-06-02  0.4a     Fixed bug in Huffman coder: unstable sorting
+                     Win32 & Linux versions
+

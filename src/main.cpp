@@ -2,7 +2,8 @@
 // This module contains driver that uses Tornado library to compress files.
 // (c) Bulat Ziganshin <Bulat.Ziganshin@gmail.com>
 #include "Tornado.cpp"
-#include "Standalone.h"
+#include "../Standalone.h"
+
 
 // Codec and parser names for humans
 const char *codec_name[]  = {"storing", "bytecoder", "bitcoder", "hufcoder", "aricoder"};
@@ -18,44 +19,103 @@ char *name (PackMethod method)
     showMem (method.buffer,   b);
     int x  = method.caching_finder;
     int p  = method.match_parser;
-    int h3 = method.hash3log;
-    sprintf (u, method.update_step<999? " u%d":"", method.update_step);
-    sprintf (namebuf, c==STORING? codec_name[c] : "%s %s hash%d%s%s%s, buffer %s, %s",
-             parser_name[p], h, l, x?"x":"", h3?"+3byte":"", u, b, codec_name[c]);
+    int h3 = method.hash3;
+    sprintf (u, method.update_step<999? "/u%d":"", method.update_step);
+    sprintf (namebuf, c==STORING? codec_name[c] : "%s %s hash%d%s%s%s, buffer %s, %s%s",
+             parser_name[p], h, l, x==2?"xx":x?"x":"", u, h3==2?" + hash2/3x":h3?" + hash2/3":"", b, codec_name[c], method.find_tables? "" : "/notables");
     return namebuf;
 }
 
-// Structure for recording compression statistics and zero record of this type
-struct Results {uint64 insize, outsize; double time;} r0;
+int verbose=0;
 
-// Input and output files business
-FILE *fin, *fout;
-uint64 filesize;  // Size of input file
-Results r;        // Accumulator for compression statistics
-int ReadWriteCallback (char *what, void *buf, int size, VOID_FUNC *callback)
+enum MODE {AUTO, COMPRESS, DECOMPRESS, BENCHMARK, HELP};
+
+// Structure for recording compression statistics and zero record of this type
+struct Results {
+  MODE mode;                 // Operation mode
+  FILE *fin, *fout;          // Input and output files
+  uint64 filesize;           // Size of input file
+  uint64 insize, outsize;    // How many bytes was already read/written
+  uint64 qoutsize;           // Size of compressed output (including data not yet written to disk)
+  double time, lasttime;     // How many time was spent in (de)compression routines
+} r0;
+
+// Callback function called by compression routine to read/write data.
+// Also it's called by the driver to init/shutdown its processing
+int ReadWriteCallback (char *what, void *buf, int size, VOID_FUNC *r_)
 {
-  if (strequ(what,"read")) {
-    r.time += getGlobalTime();
-    int n = file_read (fin, buf, size);
+  Results &r = *(Results*)r_;        // Accumulator for compression statistics
+
+  if (strequ(what,"init")) {
+    r.filesize = get_flen(r.fin);
+    //r.time -= getGlobalTime();     // alternative method of computing (de)compression time
+
+  } else if (strequ(what,"read")) {
+    //r.time += getGlobalTime();
+    int n = file_read (r.fin, buf, size);
     r.insize += n;
-    if (r.insize!=filesize)  printf("\b\b\b%2d%%", int(double(r.insize)*100/filesize));
-    r.time -= getGlobalTime();
+    //r.time -= getGlobalTime();
     return n;
-  } else if (strequ(what,"write")) {
-    r.time += getGlobalTime();
-    file_write (fout, buf, size);
-    r.outsize += size;
-    r.time -= getGlobalTime();
+
+  } else if (strequ(what,"write") || strequ(what,"quasiwrite")) {
+    //r.time += getGlobalTime();
+    if (strequ(what,"write")) {
+      if (r.fout)  file_write (r.fout, buf, size);
+      r.outsize += size;
+    } else {
+      r.qoutsize += size;
+    }
+
+    // Update progress indicator
+    if (!verbose && r.insize && mymax(r.outsize,r.qoutsize))
+    {
+      r.time = getThreadCPUTime();
+      char percents[100] = "",  remains[100] = "";
+      if (r.filesize) {
+        sprintf (percents, "%d%%: ", int(double(r.insize)*100/r.filesize));
+        sprintf (remains, ". Remains %.0lf sec", double(r.filesize-r.insize)/r.insize*r.time);
+      }
+      double insizeMB  = double(r.insize)/1000/1000;
+      double outsizeMB = double(mymax(r.outsize,r.qoutsize))/1000/1000;
+      double ratio     = (r.mode==COMPRESS? outsizeMB/insizeMB : insizeMB/outsizeMB) * 100;
+      double speed     = (r.mode==COMPRESS? insizeMB : outsizeMB) / mymax(r.time,0.001);
+      printf( "\r%s%.3lf -> %.3lf mb (%.1lf%%), speed %.3lf mb/sec%s   ",
+                percents, insizeMB, outsizeMB, ratio, speed, remains);
+
+      if (r.filesize && r.time>r.lasttime+0.5) {  // Update window title every 0.5 seconds
+        sprintf (percents, "%d%%%s - Tornado", int(double(r.insize)*100/r.filesize), remains);
+        EnvSetConsoleTitle (percents);
+        r.lasttime = r.time;
+      }
+    }
+    //r.time -= getGlobalTime();
     return size;
+
+  } else if (strequ(what,"done")) {
+    //r.time += getGlobalTime();
+    // Print final compression statistics
+    if (!verbose && r.insize && r.outsize)
+    {
+      r.time = getThreadCPUTime();
+      double insizeMB  = double(r.insize)/1000/1000;
+      double outsizeMB = double(r.outsize)/1000/1000;
+      double ratio     = (r.mode==COMPRESS? outsizeMB/insizeMB : insizeMB/outsizeMB) * 100;
+      double speed     = (r.mode==COMPRESS? insizeMB : outsizeMB) / mymax(r.time,0.001);
+      printf( "\r%s %.3lf -> %.3lf mb (%.1lf%%), time %.3lf secs, speed %.3lf mb/sec\n",
+        r.mode==COMPRESS? "Compressed":"Unpacked", insizeMB, outsizeMB, ratio, r.time, speed);
+      EnvResetConsoleTitle();
+    }
+
   } else {
     return FREEARC_ERRCODE_NOT_IMPLEMENTED;
   }
 }
 
+
 int main (int argc, char **argv)
 {
     // Operation mode
-    enum MODE {AUTO, COMPRESS, DECOMPRESS, BENCHMARK, HELP}  mode, global_mode=AUTO;
+    MODE global_mode=AUTO;
 
     // Default compression parameters are equivalent to option -5
     PackMethod method = std_Tornado_method [default_Tornado_method];
@@ -72,7 +132,7 @@ int main (int argc, char **argv)
         char *param = *argv_ptr;
         if (*param == '-') {
             param++;
-                 if (strcasecmp(param,"-")==0)      break;
+                 if (strcasecmp(param,"-")==0)   break;
             else if (isdigit(*param))            method = std_Tornado_method [mymin(atoi(param),elements(std_Tornado_method)-1)];
         }
     }
@@ -83,25 +143,31 @@ int main (int argc, char **argv)
             fcount++;
         } else { param++;  int error=0;
                  if (strcasecmp(param,"-")==0)      break;
+            else if (strcasecmp(param,"") ==0)      continue;
             else if (strcasecmp(param,"z")==0)      global_mode=COMPRESS;
             else if (strcasecmp(param,"d")==0)      global_mode=DECOMPRESS;
+            else if (strcasecmp(param,"t")==0)      output_filename="";
             else if (strcasecmp(param,"h")==0)      global_mode=HELP;
             else if (strcasecmp(param,"b")==0)      method.buffer=INT_MAX/2+1;
             else if (strcasecmp(param,"x")==0)      method.caching_finder = 1;
+            else if (strcasecmp(param,"xx")==0)     method.caching_finder = 2;
             else if (strcasecmp(param,"x+")==0)     method.caching_finder = 1;
             else if (strcasecmp(param,"x-")==0)     method.caching_finder = 0;
-            else if (strcasecmp(param,"s")==0)      method.hash3log = 1;
-            else if (strcasecmp(param,"s+")==0)     method.hash3log = 1;
-            else if (strcasecmp(param,"s-")==0)     method.hash3log = 0;
+            else if (strcasecmp(param,"s")==0)      method.hash3 = 1;
+            else if (strcasecmp(param,"ss")==0)     method.hash3 = 2;
+            else if (strcasecmp(param,"s+")==0)     method.hash3 = 1;
+            else if (strcasecmp(param,"s-")==0)     method.hash3 = 0;
             else if (isdigit(*param))            ; // -0..-12 option is already processed :)
             else switch( tolower(*param++) ) {
                 case 'c': method.encoding_method = parseInt (param, &error); break;
+                case 'x': method.caching_finder  = parseInt (param, &error); break;
+                case 's': method.hash3           = parseInt (param, &error); break;
                 case 'l': method.hash_row_width  = parseInt (param, &error); break;
                 case 'b': method.buffer          = parseMem (param, &error); break;
-                case 'd': table_dist             = parseMem (param, &error); break;
-                case 's': table_shift            = parseMem (param, &error); break;
+                //case 'd': table_dist             = parseMem (param, &error); break;
+                //case 's': table_shift            = parseMem (param, &error); break;
                 case 'p': method.match_parser    = parseInt (param, &error); break;
-                case 'o': output_filename        = *param? param : "nul"; break;
+                case 'o': output_filename        = param;                    break;
                 case 'h': method.hashsize        = parseMem (param, &error); break;
                 case 'u': method.update_step     = parseInt (param, &error); break;
                 default : printf( "\n Unknown option '%s'\n", param-2);
@@ -117,15 +183,17 @@ int main (int argc, char **argv)
         char h[100], b[100];
         showMem (method.hashsize, h);
         showMem (method.buffer,   b);
-        printf( "Tornado compressor v0.3 (c) Bulat.Ziganshin@gmail.com  2008-03-05");
+        printf( "Tornado compressor v0.4a (c) Bulat.Ziganshin@gmail.com  2008-06-02");
         printf( "\n" );
         printf( "\n Usage: tor [options and files in any order]");
-        printf( "\n   -#     -- compression level (0..%d), default %d", elements(std_Tornado_method)-1, default_Tornado_method);
+        printf( "\n   -#     -- compression level (1..%d), default %d", elements(std_Tornado_method)-1, default_Tornado_method);
         printf( "\n   -z     -- force compression" );
         printf( "\n   -d     -- force decompression" );
         printf( "\n   -oNAME -- output filename/directory (default .tor/.untor)" );
+        printf( "\n   -t     -- test (de)compression (redirect output to nul)" );
         printf( "\n   -h     -- display this help" );
         printf( "\n   --     -- stop flags processing" );
+        printf( "\n \"-\" used as filename means stdin/stdout" );
         printf( "\n" );
         printf( "\n Advanced compression parameters:" );
         printf( "\n   -b#    -- buffer size, default %s", b);
@@ -135,8 +203,8 @@ int main (int argc, char **argv)
 #ifdef FULL_COMPILE
         printf( "\n   -c#    -- coder (1-bytes,2-bits,3-huf,4-arith), default %d", method.encoding_method);
         printf( "\n   -p#    -- parser (1-greedy,2-lazy), default %d", method.match_parser);
-        printf( "\n   -s[-]  -- enable/disable 3-byte hash, default %s", method.hash3log? "-s+":"-s-");
-        printf( "\n   -x[-]  -- enable/disable caching match finder, default %s", method.caching_finder? "-x+":"-x-");
+        printf( "\n   -x#    -- caching match finder (0-disabled,1-shifting,2-cycled), default -x%d", method.caching_finder);
+        printf( "\n   -s#    -- 2/3-byte hash (0-disabled,1-fast,2-max), default -s%d", method.hash3);
 #endif
         printf( "\n" );
         exit(1);
@@ -148,91 +216,93 @@ int main (int argc, char **argv)
     bool parse_options=TRUE;  // options will be parsed until "--"
     for (char **filename = argv; *++filename!=NULL; )
     {
+        Results r = r0;
+
         // If options are still parsed and this argument starts with "-" - it's an option
-        if (parse_options && **filename=='-') {
+        if (parse_options && filename[0][0]=='-' && filename[0][1]) {
             if (strequ(*filename,"--"))  parse_options=FALSE;
             continue;
         }
 
-        fin = fopen( *filename, "rb" );
-        if (fin == NULL) {
+        r.fin = strequ (*filename, "-")? stdin : fopen (*filename, "rb");
+        if (r.fin == NULL) {
             printf( "\n Can't open %s for read\n", *filename);
             exit(2);
         }
+        set_binary_mode (r.fin);
 
-        // Select operation mode if it is not defined in cmdline
-        mode = global_mode;
-        if (mode==AUTO) {
-            if (end_with (*filename, ".tor"))
-                mode=DECOMPRESS;
-            else
-                mode=COMPRESS;
-        }
+        // Select operation mode if it was not specified on cmdline
+        r.mode = global_mode != AUTO?           global_mode :
+                 end_with (*filename, ".tor")?  DECOMPRESS  :
+                                                COMPRESS;
 
-        // Construct output filename if no one is given on cmdline:
-        // on compressing - add .tor
-        // on unpacking   - remove .tor (and add .untor if file already exists)
+        // Construct output filename
         char outname[10000];
-        if (mode==BENCHMARK) {
-           strcpy (outname, "nul");
+        if (r.mode==BENCHMARK  ||  output_filename && strequ (output_filename, "")) {  // Redirect output to nul
+            strcpy (outname, "");
         } else if (output_filename) {
             if (is_path_char (last_char (output_filename)))
                 sprintf(outname, "%s%s.tor", output_filename, *filename);   // PROBLEM! .untor too
+            else if (dir_exists (output_filename))
+                sprintf(outname, "%s%c%s.tor", output_filename, PATH_DELIMITER, *filename);
             else
                 strcpy (outname, output_filename);
         } else {
-            if (mode==COMPRESS) {
+            // No output filename was given on cmdline:
+            //    on compression   - add .tor
+            //    on decompression - remove .tor (and add .untor if file already exists)
+            if (r.mode==COMPRESS) {
                 sprintf(outname, "%s.tor", *filename);
             } else {
                 strcpy (outname, *filename);
-                if (end_with (outname, ".tor"))
+                if (end_with (outname, ".tor")) {
                     outname [strlen(outname)-4] = '\0';
-                if (file_exists (outname))
+                    if (file_exists (outname))
+                        strcat(outname, ".untor");
+                } else {
                     strcat(outname, ".untor");
+                }
             }
         }
 
         // Open output file
-        fout = fopen (outname, "wb");
-        if (fout == NULL) {
-            printf( "\n Can't open %s for write\n", outname);
-            exit(5);
+        if (*outname) {
+          r.fout = strequ (outname, "-")? stdout : fopen (outname, "wb");
+          if (r.fout == NULL) {
+              printf( "\n Can't open %s for write\n", outname);
+              exit(5);
+          }
+          set_binary_mode (r.fout);
+        } else {
+          r.fout = NULL;
         }
 
         // Prepare to (de)compression
-        filesize = get_flen(fin);
-        r = r0;
-        r.time -= getGlobalTime();
-        char title[200];
         int result;
+        ReadWriteCallback ("init", NULL, 0, (VOID_FUNC*)&r);
 
         // Perform actual (de)compression
-        switch (mode) {
+        switch (r.mode) {
         case COMPRESS: {
-            printf ("%s: compressing %.0lf kb:  0%%", name(method), double(filesize/1000));
+            printf ("Compressing %.3lf mb with %s\n", double(r.filesize)/1000/1000, name(method));
             PackMethod m = method;
-            m.buffer = mymin (method.buffer, filesize+LOOKAHEAD*2);
-            result = tor_compress (m, ReadWriteCallback, NULL);
-            sprintf (title, "\r%s: compressed %.0lf -> %.0lf kb (%3.1lf%%)", name(method), double(r.insize/1000), double(r.outsize/1000), (double)r.outsize*100/r.insize);
-//            sprintf (title, "\r%s: compressed %.0lf -> %.0lf b (%3.1lf%%)", name(method), double(r.insize), double(r.outsize), (double)r.outsize*100/r.insize);
+            m.buffer = mymin (method.buffer, r.filesize+LOOKAHEAD*2);
+            result = tor_compress (m, ReadWriteCallback, (VOID_FUNC*)&r);
             break; }
 
         case DECOMPRESS: {
-            printf("Decompressing %.0lf kb:  0%%", double(filesize/1000));
-            result = tor_decompress (ReadWriteCallback, NULL);
-            sprintf (title, "\rDecompressed %.0lf -> %.0lf kb (%3.1lf%%)", double(r.insize/1000), double(r.outsize/1000), (double)r.insize*100/r.outsize);
+            //printf("Unpacking %.3lf mb\n", double(r.filesize)/1000/1000);
+            result = tor_decompress (ReadWriteCallback, (VOID_FUNC*)&r);
             break; }
         }
 
         // Finish (de)compression
-        r.time += getGlobalTime();
-        fclose (fin);
-        fclose (fout);
+        ReadWriteCallback ("done", NULL, 0, (VOID_FUNC*)&r);
+        fclose (r.fin);
+        if (r.fout)  fclose (r.fout);
 
-        if (result == FREEARC_OK)  {
-            printf( "%s: %.3lf sec\n", title, r.time);
-        } else {
-            delete_file(outname);
+        if (result != FREEARC_OK)  {
+            if (!strequ(outname,"-") && !strequ(outname,""))  delete_file(outname);
             switch (result) {
             case FREEARC_ERRCODE_INVALID_COMPRESSOR:
                 printf("\nThis compression mode isn't supported by small Tornado version, use full version instead!");
@@ -255,6 +325,18 @@ int main (int argc, char **argv)
 
 
 /*
+LZ77 model:
+    -no lz if len small and dist large: don't have much sense with our MINLEN=4
+    -hash4+3: only 1% gain even on ghc.exe
+    -hash5+4: 48->46.7 mb but 2x slower (22->46sec: 240mb compressed using 16mb hash)
+    -0x65a8e9b4 for hash
+    +combined len+dist encoding a-la cabarc - will make decoding a bit faster, but who cares? :)
+    -save into hash records unused part of hash value in order to make
+        fast check of usability of this hash slot (like it is already
+        done in REP); would be especially helpful on larger hashes
+    -save into hash record 4 bits of p[5] - would be useful to skip trying second..fourth hash records
+    +save into hash record 4 bytes of data
+    +lazy search (and return of 3-byte strings) for highest compression mode
 +l8... - ДНАЮБХКН 1 КХЬМЧЧ ЯЕЙСМДС МЮ НАПЮАНРЙС ЙЮФДШУ 280 ЛА
 +compare with ideal hash function crc+crc+..
     (((CRCTab[(x)&255] ^ _rotr(CRCTab[((x)>>8)&255],8) ^ _rotr(CRCTab[((x)>>16)&255],16) ^ _rotr(CRCTab[((x)>>24)&255],24)) >> HashShift) & HashMask)
@@ -301,6 +383,7 @@ int main (int argc, char **argv)
 +tor_(de)compress - returns error code or FREEARC_OK
 +freearc: АКНЙХПНБЮРЭ РПЕД ВРЕМХЪ ОПХ ГЮОХЯХ ДЮММШУ
 +7z's lazy heuristic
+  -ОПХ ОНХЯЙЕ ЯРПНЙХ - if newlen=len+1 and newdist>dist*8 - ignore it
 +2-byte strings, +repdist, -repboth, +repchar
 +НАПЮАНРЙЮ ЛЮКЕМЭЙХУ ТЮИКНБ!
 +БНЯЯРЮМНБХРЭ bytecoder
@@ -318,16 +401,18 @@ int main (int argc, char **argv)
         101..104 МЕ ЯНБЯЕЛ ЮЙЙСПЮРМН ХЯОНКЭГНБЮКЯЪ ДКЪ data table codes
 -context-based char encoding
   separate coder table after \0 or after \0..\31
-split caching hash into two parts - pointers and data
-  cyclic hash for large N
++diffing tables
+-repboth, repchar1..3
+-split caching hash into two parts - pointers and data
+  +cyclic hash for large N
 ОПХ ДНЯРЮРНВМН ДКХММНЛ Х ДЮК╦ЙНЛ ЛЮРВЕ БШЙХДШБЮРЭ ЕЦН ХГ УЕЬЮ Б ОПЕДОНКНФЕМХХ, ВРН РЕЙСЫЮЪ ЯРПНЙЮ ЕЦН ОПЕЙПЮЯМН ГЮЛЕМХР
-  +ДЕКЮРЭ ЯДБХЦ НРДЕКЭМН, ОНЯКЕ ЖХЙКЮ ОНХЯЙЮ ЛЮРВЕИ (ОНОПНАНБЮМН ОПХ МЕПЮГДЕК╦ММНЛ CMF)
+  -ДЕКЮРЭ ЯДБХЦ НРДЕКЭМН, ОНЯКЕ ЖХЙКЮ ОНХЯЙЮ ЛЮРВЕИ (ОНОПНАНБЮМН ОПХ МЕПЮГДЕК╦ММНЛ CMF)
 block-static arithmetic coder - may improve compression by 1-2%
 ? caching MF ДКЪ -l2
 ? 5/6-byte main hash for highest modes (-7 and up)
 hash3+lazy - ЯЙНЛАХМХПНБЮРЭ Б ДПСЦНЛ ОНПЪДЙЕ, ОНЯЙНКЭЙС МЕР ЯЛШЯКЮ ХЯЙЮРЭ 3-АЮИРНБСЧ ЯРПНЙС ОНЯКЕ ЛЮРВЮ?
 ГЮОНКМХРЭ ЙНМЕЖ АСТЕПЮ ЯКСВЮИМШЛХ ДЮММШЛХ Х САПЮРЭ ОПНБЕПЙХ p+len<bufend
-НЦПЮМХВХРЭ ОПНБЕПЪЕЛХСЧ ДХЯРЮМЖХЧ Б -1/-2/-3? ВРНАШ МЕ БШКЕГЮРЭ ГЮ ПЮГЛЕП ЙЕЬЮ
+НЦПЮМХВХРЭ ОПНБЕПЪЕЛСЧ ДХЯРЮМЖХЧ Б -1/-2/-3? ВРНАШ МЕ БШКЕГЮРЭ ГЮ ПЮГЛЕП ЙЕЬЮ
 rolz 1+2+3+4
 minor thoughts:
   small outbuf for -5 and higher modes
@@ -344,14 +429,28 @@ huf/ari - improve "first block" encoding, adaptation (currently, up to 1/64 of c
   +EOB code
 ? БШБНДХРЭ ДЮММШЕ АКНЙЮЛХ, ЯННРБЕРЯРБСЧЫХЛХ БУНДМШЛ chunks, storing МЕЯФЮБЬХУЯЪ АКНЙНБ
     header = 1 byte flags + 3 bytes len
-+diffing tables
-use REPBOTH for very fast detection of tables of any size
--repboth, repchar1..3
-check matches at repdist distances
 АНКЕЕ ДЕРЮКХГХПНБЮММШЕ disttables ДКЪ ЛЮКЕМЭЙХУ len
-ОПХ ОНХЯЙЕ ЯРПНЙХ - if newlen=len+1 and newdist>dist*8 - ignore it
--1,-2,-3?: no MM, no REP*
-huf/ari: БЛЕЯРН cnt++ ДЕКЮРЭ cnt+=10 - ДНКФМН СБЕКХВХРЭ РНВМНЯРЭ ЙНДХПНБЮМХЪ
+-1,-2,-3?: +no MM, no REP*
+huf/ari: БЛЕЯРН cnt++ ДЕКЮРЭ cnt+=10 - ДНКФМН СБЕКХВХРЭ РНВМНЯРЭ ЙНДХПНБЮМХЪ (ЩРН СБЕКХВХБЮЕР ПЮГЛЕП РЮАКХЖ, ВРН ГЮЛЕДКЪЕР ЙНДХПНБЮМХЕ; БНГЛЯНФМН, ОПНАКЕЛС ЛНФМН ПЕЬХРЭ ХЯОНКЭГНБЮМХЕЛ 3-СПНБМЕБШУ РЮАКХЖ ЙНДХПНБЮМХЪ)
+ST4/BWT sorting for exhaustive string searching
+
+СЯЙНПЕМХЕ tor:5
+  СЯЙНПЕМХЕ lazy ОНХЯЙЮ (йЮДЮВ)
+  СЯЙНПЕМХЕ ЯПЮБМЕМХЪ ЛЮРВЕИ (ХДЕЪ ЮБРНПЮ QuickLZ)
+  ХЯЙЮРЭ MM tables by rep* codes
+  НОРХЛХГХПНБЮРЭ huf Х ОЕПЕИРХ МЮ МЕЦН
+  ДКЪ РЕЙЯРНБ:
+    МЕ ХЯОНКЭГНБЮРЭ 2/3-byte matches
+    ХЯОНКЭГНБЮРЭ huf c АНКЭЬХЛ АКНЙНЛ БЛЕЯРН ЮПХТЛЕРХЙХ
+    МЕ ОПНБЕПЪРЭ МЮ repchar/repdist/repboth
+    МЕ ХЯЙЮРЭ MM tables
+
+СЯЙНПЕМХЕ/СКСВЬЕМХЕ ЯФЮРХЪ tor:7-12
+  +ХЯОНКЭГНБЮРЭ АЕЯЯДБХЦНБСЧ РЕУМНКНЦХЧ УЕЬХПНБЮМХЪ Х -u1
+  +2/3hash: СБЕКХВХРЭ ПЮГЛЕП, БЯРЮБКЪРЭ БЯЕ ЯРПНЙХ
+  ХЯЙЮРЭ Б АНКЭЬНЛ УЕЬЕ ЯРПНЙХ ДКХМШ >=6/7, ЯОХУМСБ ЛЕМЭЬХЕ БН БЯОНЛНЦЮР. УЩЬ
+  ОПНОСЯЙЮРЭ ЯХЛБНКШ 0/' ' ОПХ УЕЬХПНБЮМХХ
+  check matches at repdist distances
 
 
 +-h1mb in cmdline
@@ -361,8 +460,9 @@ huf/ari: БЛЕЯРН cnt++ ДЕКЮРЭ cnt+=10 - ДНКФМН СБЕКХВХР
 +64-bit insize/outsize
 +-b128k, m.hashsize БЛЕЯРН hashlog, print block/hashsize in help with k/m suffix
 +CHECK mallocs
-dir_exists=file_exists(dir\.) || end_with(:/\)
--t, -f force overwrite, -d delete src files, stdin->stdout by default
++dir_exists=file_exists(dir\.) || end_with(:/\)
++progress indicator in console title
+-t, -f force overwrite, -k keep src files, stdin->stdout by default
 make non-inline as much functions as possible (optimize .exe size): +MatchFinder.cpp +LZ77_Coder.cpp
 ****Tornado 0.2 compressing VC, 41243 kb     --noheader option disables this
 ****-1: 1kb hash1...: done 5%
@@ -394,4 +494,10 @@ Changes in 0.3:
     -5 thor, 7zip -mx1
     -6 uharc -mz
     -7 bzip2, rar -m2
+
+Changes in 0.4:
+    Cyclic caching MF (makes -9..-11 modes faster)
+    Full 2/3-byte hashing in -9..-11 modes which improves compression a bit
+    Improved console output to provide more information
+
 */
